@@ -1,0 +1,84 @@
+---
+title: "Strava_File"
+format: html
+---
+
+# STRAVA PROJECT 
+
+This is a project where I trace my own activities.
+```{r}
+#install.packages("XML")
+#install.packages("gitcreds")
+library("readr")
+library("sf")
+library(ggplot2)
+library(dplyr)
+library("gitcreds")
+library(XML) #to read the XML data of "activities/11103101530.gpx" files
+library(leaflet) #to show in a map
+
+laura_act <- read.csv("Laura_act.csv")
+
+laura_act <- st_as_sf(laura_act, coords = c("E", "N"), crs = 2056)
+
+```
+
+https://www.appsilon.com/post/r-gpx-files
+the coord info is in gpx file for every activity. 
+
+```{r}
+gpx_parsed <- htmlTreeParse(file = "activities/11103101530.gpx", useInternalNodes = TRUE)
+gpx_parsed
+
+coords <- xpathSApply(doc = gpx_parsed, path = "//trkpt", fun = xmlAttrs)
+elevation <- xpathSApply(doc = gpx_parsed, path = "//trkpt/ele", fun = xmlValue)
+
+df <- data.frame(
+  lat = as.numeric(coords["lat", ]),
+  lon = as.numeric(coords["lon", ]),
+  elevation = as.numeric(elevation)
+)
+
+head(df, 10)
+tail(df, 10)
+
+plot(x = df$lon, y = df$lat, type = "l", col = "black", lwd = 3,
+     xlab = "Longitude", ylab = "Latitude")
+
+library(leaflet)
+
+leaflet() %>%
+  addTiles() %>%
+  addPolylines(data = df, lat = ~lat, lng = ~lon, color = "#000000", opacity = 0.8, weight = 3)
+
+
+get_color <- function(elevation) {
+  if (elevation < 500) {
+    return("green")
+  }
+  if (elevation < 1000) {
+    return("yellow")
+  }
+  if (elevation < 1500) {
+    return("orange")
+  }
+  return("red")
+}
+
+
+
+
+# New dataset with the new variable for color
+df_color <- df %>%
+  rowwise() %>%
+  mutate(color = get_color(elevation))
+
+df_color$last_color <- dplyr::lag(df_color$color)
+
+# Map
+map <- leaflet() %>% addTiles()
+for (color in levels(as.factor(df_color$color))) {
+  map <- addPolylines(map, lat = ~lat, lng = ~lon, data = df_color[df_color$color == color | df_color$last_color == color, ], color = ~color)
+}
+map
+```
