@@ -1,0 +1,343 @@
+---
+title: "Session2_Excercise"
+format: html
+---
+always execute:
+```{r}
+library("readr")
+library("sf")
+library(ggplot2)
+library("dplyr")
+```
+# Excercise A
+## Intro
+```{r}
+
+wildschwein_BE <- read_delim("wildschwein_BE_2056.csv", ",")
+
+wildschwein_BE <- st_as_sf(wildschwein_BE, coords = c("E", "N"), crs = 2056)
+```
+Note that this dataset is already converted to EPSG 2056
+and the coordinates are stored in the columns (E/N)
+## Task 2: Overview
+```{r}
+difftime_secs <- function(later1, now1){
+    as.numeric(difftime(later1, now1, units = "secs"))
+               }
+
+wildschwein_BE$timelag <- difftime_secs(lead(wildschwein_BE$DatetimeUTC), wildschwein_BE$DatetimeUTC)
+
+
+
+wildschwein_BE |>                                     # Take wildschwein...
+    group_by(TierID) |>                            # ...group it by TierID
+    summarise(                                     # Summarise the data...
+        mean_timelag = mean(timelag, na.rm = TRUE) # ...by calculating the mean timelag
+    )
+wildschwein_BE
+#um die Zeit zu berechnen pro Individuum 
+
+wildschwein_BE |>                                     # Take wildschwein...
+    group_by(TierID) |>                            # ...group it by TierID
+    summarise(                                     # Summarise the data...
+         duration = max(DatetimeUTC) - min(DatetimeUTC) # ...by calculating the mean timelag
+    )
+#hier sind man, dass es 3 individuen sind 
+wildschwein_BE
+
+#plot mit x achse zeit, y achste tier, überall punkt wo sample 
+
+plot1 <- ggplot(wildschwein_BE, aes(x = DatetimeUTC, y = TierID, color = TierName)) +
+  geom_point() +
+  scale_x_datetime(date_labels = "%Y-%m-%d %H:%M") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)
+)
+plot1
+
+
+ggplot(data = wildschwein_BE, aes(x = DatetimeUTC, y = timelag)) +
+  geom_point() +
+  scale_x_datetime(date_labels = "%Y-%m-%d %H:%M") +
+  scale_y_continuous(labels = scales::comma) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+#this way, we can find out that there are two significant outliers in 2015: there are two that are below -20 000 000 seconds. )
+
+
+#für die Gaps, wenn keine Messung länger als 20 000 000 sek = 231 tage (?) (von mir selbst festgelegt)
+wildschwein_BE |>                                   
+    group_by(TierID) |>                          
+    summarise(                                   
+         outliers_timelag =  sum(timelag < - 20000000)
+    )
+#we see, that Schwein 002A and Schwein 016A both have one outlier that is longer than 231 days.
+```
+
+How many individuals were tracked? 3
+For how long were the individual tracked? Schwein A: 338 days, B: 234 days, B: 261 days
+Are there gaps? yes, two large ones from 002A 016A 
+
+Were all individuals tracked concurrently or sequentially? ?
+What is concurrent and sequential?
+What is the temporal sampling interval between the locations? around 900 seconds normally 
+
+## Task 3: Distance
+```{r}
+
+later <- lag(wildschwein_BE$geometry)
+now <- wildschwein_BE$geometry
+
+st_distance(later, now, by_element = TRUE)  # by_element must be set to TRUE
+
+distance_by_element <- function(later, now){
+  as.numeric(
+    st_distance(later, now, by_element = TRUE)
+  )
+}
+
+wildschwein_BE$steplength <- distance_by_element(lead(wildschwein_BE$geometry), wildschwein_BE$geometry) 
+
+wildschwein_BE
+#strange format??? numbers with dots behind 
+```
+
+## Task 4: Deriving distance & Speed
+
+
+In this task we will derive some additional movement parameters from our trajectories. So far our trajectories only consist of a list of time-stamped spatial locations. First let’s calculate the Euclidean distance between subsequent locations using the function st_distance() with the option by_element = TRUE. Store these values in a new column with the name steplength. Next, you can calculate the animals’ speed based on steplength and the timelag (from the last task).
+
+```{r}
+
+wildschwein_BE <- wildschwein_BE |>  
+  mutate(speed = steplength / timelag)
+
+wildschwein_BE 
+```
+## Task 5: Plausibility Check & Visualisation
+```{r}
+wildschwein_sample <- wildschwein_BE |>
+  filter(TierName == "Sabi") |> 
+  head(100)
+
+library(tmap)
+tmap_mode("view")
+
+tm_shape(wildschwein_sample) + 
+  tm_dots()
+```
+## Task 5: dissolving into Multipoint object 
+```{r}
+wildschwein_sample_line <- wildschwein_sample |> 
+  # dissolve to a MULTIPOINT:
+  summarise(do_union = FALSE) |> 
+  st_cast("LINESTRING")
+
+tmap_options(basemaps = "OpenStreetMap")
+
+tm_shape(wildschwein_sample_line) +
+  tm_lines() +
+  tm_shape(wildschwein_sample) + 
+  tm_dots()
+```
+
+
+
+
+
+
+# Excercise B
+##Intro
+```{r}
+caro <- read_delim("caro60.csv", ",")
+
+caro <- st_as_sf(caro, coords = c("E", "N"), crs = 2056)
+
+
+difftime_secs <- function(x, y){
+  as.numeric(difftime(x, y, units = "secs"))
+}
+
+distance_by_element <- function(later, now){
+  as.numeric(
+    st_distance(later, now, by_element = TRUE)
+  )
+}
+
+# We can then import the data. We can discard all columns with the exception of DatetimeUTC with select (see below).
+
+caro <- read_delim("caro60.csv", ",") |>
+  st_as_sf(coords = c("E","N"), crs = 2056) |> 
+  select(DatetimeUTC)
+
+```
+
+## Task 1: Calculate speed at scale 1
+
+In our first scale, we will assume a sampling window  of 120 seconds. This conveniently means that for every location, you can use the previous and next location to calculate speed. Try to implement this in R.
+```{r}
+
+caro$timelag <- difftime_secs(lead(caro$DatetimeUTC), caro$DatetimeUTC)
+caro$steplength <- distance_by_element(lead(caro$geometry), caro$geometry)
+
+caro$speed <- caro$steplength / caro$timelag
+
+head(caro)
+
+#if I dont put n=2, then 60m appears instead of 120. with what should we calculate now? 
+#also, the NAs dont appear in the following steps, like they do in the example. 
+#and the outliers are not sorted out, even if I put "outliers=FALSE"
+
+```
+
+## Task 2: Calculate speed at scale 2
+offset of 4 for 240 seconds, because at n=1 -> 60 seconds
+```{r}
+caro$timelag2 <- difftime_secs(lead(caro$DatetimeUTC, n = 4), caro$DatetimeUTC)
+caro$steplength2 <- distance_by_element(lead(caro$geometry,  n = 4), caro$geometry)
+caro$speed2 <- caro$steplength2 / caro$timelag2
+
+head(caro)
+
+caro |> 
+  # drop geometry and select only specific columns
+  # to display relevant data only
+  st_drop_geometry() |> 
+  select(timelag2, steplength2, speed2) |> 
+  head()
+
+
+#irgendwarum erscheinen bei mir nicht die ersten beiden als NA??
+```
+
+
+## Task 3: Scale 3
+```{r}
+caro$timelag3 <- difftime_secs(lead(caro$DatetimeUTC, n = 8), caro$DatetimeUTC)
+caro$steplength3 <- distance_by_element(lead(caro$geometry,  n = 8), caro$geometry)
+caro$speed3 <- caro$steplength3 / caro$timelag3
+
+caro |> 
+  st_drop_geometry() |> 
+  select(timelag3, steplength3, speed3) |> 
+  head()
+
+#irgendwarum erscheinen bei mir nicht die ersten beiden als NA??
+```
+
+
+## Task 4: Compare speeds
+```{r}
+caro |> 
+  st_drop_geometry() |> 
+  select(DatetimeUTC, speed, speed2, speed3)
+
+library(ggplot2)
+
+ggplot(caro, aes(y = speed)) + 
+    # we remove outliers to increase legibility, analogue
+  # Laube and Purves (2011)
+  geom_boxplot(outliers = FALSE) #doesnt work, says  Ignoring unknown parameters: `outliers`
+
+library(tidyr)
+
+# before pivoting, let's simplify our data.frame
+caro2 <- caro |> 
+  st_drop_geometry() |> 
+  select(DatetimeUTC, speed, speed2, speed3)
+
+caro_long <- caro2 |> 
+  pivot_longer(c(speed, speed2, speed3))
+  
+head(caro_long)
+```
+
+### pivot longer
+```{r}
+library(tidyr)
+
+# before pivoting, let's simplify our data.frame
+caro2 <- caro |> 
+  st_drop_geometry() |> 
+  select(DatetimeUTC, speed, speed2, speed3)
+
+caro_long <- caro2 |> 
+  pivot_longer(c(speed, speed2, speed3))
+  
+head(caro_long)
+
+ggplot(caro_long, aes(name, value)) +
+  # we remove outliers to increase legibility, analogue
+  # Laube and Purves (2011)
+  geom_boxplot(outliers = FALSE)
+```
+
+
+
+# Excercise C 
+##Task 1:
+```{r}
+laura_act <- read.csv("Laura_act.csv")
+
+laura_act <- st_as_sf(laura_act, coords = c("E", "N"), crs = 2056)
+
+install.packages("XML")
+```
+
+https://www.appsilon.com/post/r-gpx-files
+the coord info is in gpx file for every activity. 
+
+```{r}
+install.packages("XML")
+library(XML)
+
+gpx_parsed <- htmlTreeParse(file = "activities/11103101530.gpx", useInternalNodes = TRUE)
+gpx_parsed
+
+coords <- xpathSApply(doc = gpx_parsed, path = "//trkpt", fun = xmlAttrs)
+elevation <- xpathSApply(doc = gpx_parsed, path = "//trkpt/ele", fun = xmlValue)
+
+df <- data.frame(
+  lat = as.numeric(coords["lat", ]),
+  lon = as.numeric(coords["lon", ]),
+  elevation = as.numeric(elevation)
+)
+
+head(df, 10)
+tail(df, 10)
+
+plot(x = df$lon, y = df$lat, type = "l", col = "black", lwd = 3,
+     xlab = "Longitude", ylab = "Latitude")
+
+library(leaflet)
+
+leaflet() %>%
+  addTiles() %>%
+  addPolylines(data = df, lat = ~lat, lng = ~lon, color = "#000000", opacity = 0.8, weight = 3)
+
+
+get_color <- function(elevation) {
+  if (elevation < 500) {
+    return("green")
+  }
+  if (elevation < 1000) {
+    return("yellow")
+  }
+  if (elevation < 1500) {
+    return("orange")
+  }
+  return("red")
+}
+
+# New dataset with the new variable for color
+df_color <- df %>%
+  rowwise() %>%
+  mutate(color = get_color(elevation))
+
+df_color$last_color <- dplyr::lag(df_color$color)
+
+# Map
+map <- leaflet() %>% addTiles()
+for (color in levels(as.factor(df_color$color))) {
+  map <- addPolylines(map, lat = ~lat, lng = ~lon, data = df_color[df_color$color == color | df_color$last_color == color, ], color = ~color)
+}
+map
+```
